@@ -9,7 +9,7 @@ env:
   # Sonar stuff, please update accordingly
   enable_sonar:    "true"
   sonar_organization: "catherine202"
-  sonar_projectKey: "artemis_project"
+  sonar_projectKey: "catherine202_artemis_project"
   sonar_login:  ${{ secrets.SONAR_TOKEN }} 
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
 
