@@ -1,0 +1,98 @@
+env:
+  region:             "us-central1"
+  app_name:           "artemis"
+  app_version:        ${GITHUB_SHA}
+  app_port:           "5000"
+  project_id:         "${{ secrets.PROJECT_ID }}"
+  repository:         "us-central1-docker.pkg.dev/${{ secrets.PROJECT_ID }}/artemis/artemis"
+  cluster_name:       "project-cluster"
+  helm_repository:    "https://github.com/farrukh90/custom_helm_chart.git"
+  google_domain_name: "${{ secrets.GOOGLE_DOMAIN_NAME }}"
+  environment:        "qa"
+  github_username:    "farrukh90"
+  slack_enabled:      "false"
+
+
+name: ContinuousDeployment
+on:
+  workflow_run:
+    workflows: ["ContinuousDelivery"]
+    types:
+      - completed
+# on:
+#   # Triggers the workflow on push or pull request events but only for the "main" branch
+#   push:
+#     branches: [ "main" ]
+#   pull_request:
+#     branches: [ "main" ]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg2 curl
+          wget -nc --no-check-certificate https://download.webmin.com/jcameron-key.asc
+          gpg --batch --yes --dearmor jcameron-key.asc | sudo tee /usr/share/keyrings/jcameron-key.gpg > /dev/null
+
+      # Authenticate to GCP
+
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v0'
+        with:
+          credentials_json: '${{ secrets.SERVICE_ACCOUNT }}'
+
+      - name: Check Out Helm Repo
+        run: |
+          git clone "${{ env.helm_repository }}"
+          
+          
+      - name: Get k8s credentials
+        run: |
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          sudo apt-get update
+          sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin kubectl
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+          gcloud container clusters get-credentials "${{ env.cluster_name }}" --region  "${{ env.region }}"
+          kubectl get nodes
+
+      - name: Configure Backend
+        working-directory: "custom_helm_chart"
+        run: |
+          bash setenv.sh
+
+      - name: Initialize
+        working-directory: "custom_helm_chart"
+        run: |
+          terraform init 
+
+
+      - name: Create workspace
+        working-directory: "custom_helm_chart"
+        run: |
+          terraform workspace  select  ${{ env.environment }}   ||  terraform workspace  new  ${{ env.environment }}
+
+
+      # Runs a set of commands using the runners shell
+      - name: Deploy Application
+        working-directory: "custom_helm_chart"
+        run: |
+          terraform init -upgrade  
+          terraform apply   \
+          -var repository="${{ env.repository }}"     \
+          -var app_version="${{ env.app_version }}"   \
+          -var app_port="${{ env.app_port }}"          \
+          -var google_domain_name="${{ env.google_domain_name }}"          \
+          -var app_name="${{ env.app_name }}"   \
+          -var region="${{ env.region }}" \
+          -var project_id="${{ secrets.PROJECT_ID }}" \
+          -var environment="${{ env.environment }}" \
+          --auto-approve
